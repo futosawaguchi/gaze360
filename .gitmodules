@@ -1,0 +1,6 @@
+[submodule "third_party/gazelle"]
+	path = third_party/gazelle
+	url = https://github.com/fkryan/gazelle.git
+[submodule "third_party/theta-x-live"]
+	path = third_party/theta-x-live
+	url = https://github.com/futosawaguchi/theta-x-live.git
