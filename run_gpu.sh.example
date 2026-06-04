@@ -19,7 +19,7 @@
 GUNDAM_USER="your_username"         # GPU サーバーのユーザー名
 GUNDAM_HOST="xxx.xxx.xxx.xxx"       # GPU サーバーの IP アドレス
 THETA_IP="xxx.xxx.xxx.xxx"          # THETA X の IP（Mac の .env に書いてある値）
-TUNNEL_PORT=8081                    # gundam 上で THETA X への中継に使うポート
+TUNNEL_PORT=18081                   # gundam 上で THETA X への中継に使うポート（高番号で競合を避ける）
 STREAM_PORT=8080                    # MJPEG ストリームのポート（ブラウザで視聴）
 GPU_INDEX=0                         # 使用する GPU 番号
 
@@ -33,6 +33,7 @@ echo "=========================================="
 echo ""
 
 ssh \
+  -o ExitOnForwardFailure=yes \
   -R "${TUNNEL_PORT}:${THETA_IP}:80" \
   "${GUNDAM_USER}@${GUNDAM_HOST}" \
   "cd gaze360 && source venv/bin/activate && export CUDA_VISIBLE_DEVICES=${GPU_INDEX} && python -m src.pipeline --stream-port ${STREAM_PORT}"
