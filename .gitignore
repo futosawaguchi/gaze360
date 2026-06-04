@@ -230,3 +230,6 @@ outputs/
 *.pt
 *.pth
 *.onnx
+
+# 個人環境の実行スクリプト（サーバー名・IPが含まれるため非公開）
+run_gpu.sh

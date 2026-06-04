@@ -1,0 +1,38 @@
+#!/bin/bash
+# gaze360 を GPU サーバーで実行するスクリプト（Mac側で実行する）
+#
+# 使い方:
+#   cp run_gpu.sh.example run_gpu.sh   # 自分の環境に合わせてコピー
+#   # run_gpu.sh 内の変数を編集する
+#   bash run_gpu.sh
+#
+# このスクリプトは:
+#   1. Mac の Wi-Fi 経由で繋がっている THETA X への SSH トンネルを張る
+#   2. GPU サーバー上でパイプラインを起動する
+#   3. Ctrl+C で終了するとトンネルも自動で消える
+#
+# 事前確認:
+#   - THETA X が Mac の Wi-Fi に接続されていること
+#   - GPU サーバーに gaze360 リポジトリが clone 済みで venv が構築済みであること
+#   - GPU サーバーの gaze360/.env に THETA_IP=localhost:<TUNNEL_PORT> が設定済みであること
+
+GUNDAM_USER="your_username"         # GPU サーバーのユーザー名
+GUNDAM_HOST="xxx.xxx.xxx.xxx"       # GPU サーバーの IP アドレス
+THETA_IP="192.168.1.1"              # THETA X の IP（通常変更不要）
+TUNNEL_PORT=8081                    # gundam 上で THETA X への中継に使うポート
+STREAM_PORT=8080                    # MJPEG ストリームのポート（ブラウザで視聴）
+GPU_INDEX=0                         # 使用する GPU 番号
+
+echo "=========================================="
+echo "  gaze360 GPU パイプライン 起動"
+echo "=========================================="
+echo "  トンネル : ${GUNDAM_HOST}:${TUNNEL_PORT} → ${THETA_IP}:80"
+echo "  映像視聴 : http://${GUNDAM_HOST}:${STREAM_PORT}"
+echo "  終了     : Ctrl+C"
+echo "=========================================="
+echo ""
+
+ssh \
+  -R "${TUNNEL_PORT}:${THETA_IP}:80" \
+  "${GUNDAM_USER}@${GUNDAM_HOST}" \
+  "cd gaze360 && source venv/bin/activate && export CUDA_VISIBLE_DEVICES=${GPU_INDEX} && python -m src.pipeline --stream-port ${STREAM_PORT}"
