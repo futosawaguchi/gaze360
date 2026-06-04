@@ -29,7 +29,7 @@ from src.projection.equirect import equirect_to_perspective, heatmap_to_spherica
 FOV_DEG = 90          # 透視投影パッチの画角
 PATCH_SIZE = 448      # Gaze-LLE の入力サイズ
 INOUT_THRESH = 0.3    # これ未満は「フレーム外を見ている」と判定
-DISPLAY_SCALE = 0.5   # 表示用にフレームを縮小する倍率（1.0 = 原寸）
+DISPLAY_SCALE = 1.0   # 表示用にフレームを縮小する倍率（1.0 = 原寸）
 
 # ---- 描画色 ---------------------------------------------------------------
 COLOR_PERSON  = (0, 255, 0)    # 人物 BBox: 緑
