@@ -2,48 +2,30 @@
 # gaze360 を GPU サーバーで実行するスクリプト（Mac側で実行する）
 #
 # 使い方:
-#   cp run_gpu.sh.example run_gpu.sh   # 自分の環境に合わせてコピー
+#   cp run_gpu.sh.example run_gpu.sh
 #   # run_gpu.sh 内の変数を編集する
 #   bash run_gpu.sh
-#
-# このスクリプトは:
-#   1. Mac 上で THETA X → MJPEG リレーサーバーを起動する
-#   2. GPU サーバー上でリレー映像を受け取りながらパイプラインを起動する
-#   3. Ctrl+C で終了するとリレーサーバーも自動で止まる
-#
-# 事前確認:
-#   - THETA X が Mac の Wi-Fi に接続されていること
-#   - GPU サーバーに gaze360 リポジトリが clone 済みで venv が構築済みであること
-#   - Mac の .env に THETA_SERIAL と THETA_IP が設定済みであること
 
 GUNDAM_USER="your_username"         # GPU サーバーのユーザー名
 GUNDAM_HOST="xxx.xxx.xxx.xxx"       # GPU サーバーの IP アドレス
-MAC_IP="xxx.xxx.xxx.xxx"            # Mac の LAN IP（GPU サーバーからアクセスできるもの）
-RELAY_PORT=9090                     # Mac 側リレーサーバーのポート
+THETA_IP="xxx.xxx.xxx.xxx"          # THETA X の IP（Mac の .env に書いてある値）
+TUNNEL_PORT=$((RANDOM + 40000))     # ランダムポート（毎回変わるので競合しない）
 STREAM_PORT=8080                    # GPU サーバー側 MJPEG ストリームのポート
 GPU_INDEX=0                         # 使用する GPU 番号
 
 echo "=========================================="
 echo "  gaze360 GPU パイプライン 起動"
 echo "=========================================="
-echo "  リレー  : http://${MAC_IP}:${RELAY_PORT}/stream"
-echo "  映像視聴: http://${GUNDAM_HOST}:${STREAM_PORT}"
-echo "  終了    : Ctrl+C"
+echo "  トンネル : GPU:${TUNNEL_PORT} → ${THETA_IP}:80"
+echo "  映像視聴 : http://${GUNDAM_HOST}:${STREAM_PORT}"
+echo "  終了     : Ctrl+C"
 echo "=========================================="
 echo ""
 
-# Mac 側でリレーサーバーをバックグラウンド起動
-venv/bin/python scripts/relay_camera.py --port "${RELAY_PORT}" &
-RELAY_PID=$!
-
-# リレーサーバーの起動を待つ
-sleep 2
-
-# GPU サーバー上でパイプライン起動
 ssh \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -o ExitOnForwardFailure=yes \
+  -R "${TUNNEL_PORT}:${THETA_IP}:80" \
   "${GUNDAM_USER}@${GUNDAM_HOST}" \
-  "cd gaze360 && source venv/bin/activate && export CUDA_VISIBLE_DEVICES=${GPU_INDEX} && python -m src.pipeline --source http://${MAC_IP}:${RELAY_PORT}/stream --stream-port ${STREAM_PORT}"
-
-# 終了時にリレーサーバーも止める
-kill "${RELAY_PID}" 2>/dev/null
-echo "リレーサーバーを終了しました。"
+  "cd gaze360 && source venv/bin/activate && export CUDA_VISIBLE_DEVICES=${GPU_INDEX} && THETA_IP=localhost:${TUNNEL_PORT} python -m src.pipeline --stream-port ${STREAM_PORT}"
