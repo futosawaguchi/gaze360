@@ -125,6 +125,8 @@ class MJPEGServer:
     def stop(self):
         if self._server:
             self._server.shutdown()
+            self._server.server_close()  # ソケットを明示的に解放
+            self._server = None
 
 
 def _spherical_to_pixel(yaw_deg, pitch_deg, frame_w, frame_h):
@@ -176,10 +178,15 @@ class GazePipeline:
         else:
             print("\n起動完了。'q' で終了、's' でフレーム保存\n")
 
-        if self.source is None:
-            self._run_camera()
-        else:
-            self._run_video(self.source)
+        try:
+            if self.source is None:
+                self._run_camera()
+            else:
+                self._run_video(self.source)
+        finally:
+            # 正常終了・例外・Ctrl+C どの場合もソケットを確実に解放する
+            if self._mjpeg_server:
+                self._mjpeg_server.stop()
 
     def _run_camera(self):
         try:
