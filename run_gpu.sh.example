@@ -9,8 +9,8 @@
 GUNDAM_USER="your_username"         # GPU サーバーのユーザー名
 GUNDAM_HOST="xxx.xxx.xxx.xxx"       # GPU サーバーの IP アドレス
 THETA_IP="xxx.xxx.xxx.xxx"          # THETA X の IP（Mac の .env に書いてある値）
-TUNNEL_PORT=$((RANDOM + 40000))     # ランダムポート（毎回変わるので競合しない）
-STREAM_PORT=8080                    # GPU サーバー側 MJPEG ストリームのポート
+TUNNEL_PORT=$((RANDOM + 40000))          # ランダムポート（毎回変わるので競合しない）
+STREAM_PORT=$((RANDOM % 1000 + 9000))   # ランダムポート（9000〜9999）
 GPU_INDEX=0                         # 使用する GPU 番号
 
 echo "=========================================="

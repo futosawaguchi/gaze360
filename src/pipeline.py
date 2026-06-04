@@ -20,6 +20,8 @@ Equirectangular フレーム上に結果を可視化する。
 
 import argparse
 import os
+import signal
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -398,6 +400,17 @@ def main():
         display_scale=args.scale,
         stream_port=args.stream_port,
     )
+
+    # SSH 切断（SIGHUP）や終了シグナル（SIGTERM）でソケットを確実に解放する
+    def _handle_signal(signum, frame):
+        print(f"\nシグナル {signum} を受信。終了します...")
+        if pipeline._mjpeg_server:
+            pipeline._mjpeg_server.stop()
+        sys.exit(0)
+
+    signal.signal(signal.SIGHUP, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
     pipeline.run()
 
 
