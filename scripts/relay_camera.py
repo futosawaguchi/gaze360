@@ -31,7 +31,7 @@ class _RelayHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
-            self.wfile.write(b"<html><body>THETA X Relay — use /stream</body></html>")
+            self.wfile.write(b"<html><body>THETA X Relay - use /stream</body></html>")
 
     def _send_stream(self):
         self.send_response(200)

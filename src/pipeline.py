@@ -206,11 +206,16 @@ class GazePipeline:
 
     def _run_video(self, path):
         cap = cv2.VideoCapture(path)
-        if not cap.isOpened():
-            raise FileNotFoundError(f"動画ファイルを開けません: {path}")
         # HTTP ストリーム受信時は最新フレームだけ使うためバッファを最小化
         if path.startswith("http"):
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if not cap.isOpened():
+            if path.startswith("http"):
+                raise ConnectionError(
+                    f"HTTP ストリームに接続できません: {path}\n"
+                    "Mac のリレーサーバーが起動しているか確認してください。"
+                )
+            raise FileNotFoundError(f"動画ファイルを開けません: {path}")
         try:
             while True:
                 ok, frame = cap.read()
