@@ -225,3 +225,8 @@ __marimo__/
 HANDOVER.md
 
 outputs/
+
+# モデルの重みファイル
+*.pt
+*.pth
+*.onnx
