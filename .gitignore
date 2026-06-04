@@ -218,4 +218,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-outputs/
+*.png
+*.jpeg
+*.jpg
