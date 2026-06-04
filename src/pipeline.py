@@ -39,6 +39,8 @@ FOV_DEG = 90          # 透視投影パッチの画角
 PATCH_SIZE = 448      # Gaze-LLE の入力サイズ
 INOUT_THRESH = 0.3    # これ未満は「フレーム外を見ている」と判定
 DISPLAY_SCALE = 1.0   # 表示用にフレームを縮小する倍率（1.0 = 原寸）
+STREAM_SCALE = 0.5    # ストリーム配信時のデフォルト縮小倍率（VPN帯域対策）
+STREAM_JPEG_QUALITY = 55  # ストリーム配信時の JPEG 品質（低いほど軽い）
 
 # ---- 描画色 ---------------------------------------------------------------
 COLOR_PERSON  = (0, 255, 0)    # 人物 BBox: 緑
@@ -79,7 +81,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                     frame = mjpeg.latest_frame
                 if frame is not None:
                     ok, jpeg = cv2.imencode(
-                        ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75]
+                        ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY]
                     )
                     if ok:
                         data = jpeg.tobytes()
@@ -385,8 +387,9 @@ def main():
         help="動画ファイルパス（省略時は THETA X カメラを使用）",
     )
     parser.add_argument(
-        "--scale", type=float, default=DISPLAY_SCALE,
-        help=f"表示ウィンドウの縮小倍率（デフォルト: {DISPLAY_SCALE}）",
+        "--scale", type=float, default=None,
+        help=f"表示・配信フレームの縮小倍率（省略時: ローカル {DISPLAY_SCALE} / "
+             f"ストリーム {STREAM_SCALE}）",
     )
     parser.add_argument(
         "--stream-port", type=int, default=None, dest="stream_port",
@@ -395,9 +398,17 @@ def main():
     )
     args = parser.parse_args()
 
+    # scale 未指定時: ストリーム配信は帯域節約のため縮小、ローカルは原寸
+    if args.scale is not None:
+        scale = args.scale
+    elif args.stream_port:
+        scale = STREAM_SCALE
+    else:
+        scale = DISPLAY_SCALE
+
     pipeline = GazePipeline(
         source=args.source,
-        display_scale=args.scale,
+        display_scale=scale,
         stream_port=args.stream_port,
     )
 
