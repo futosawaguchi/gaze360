@@ -114,6 +114,8 @@ class MJPEGServer:
 
     def start(self):
         """HTTP サーバーをバックグラウンドスレッドで起動する。"""
+        # allow_reuse_address=True により、前回の終了直後でも同じポートで再起動できる
+        HTTPServer.allow_reuse_address = True
         server = HTTPServer(("0.0.0.0", self.port), _MJPEGHandler)
         server.mjpeg_server = self
         self._server = server
