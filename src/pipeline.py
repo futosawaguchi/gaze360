@@ -81,7 +81,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                     frame = mjpeg.latest_frame
                 if frame is not None:
                     ok, jpeg = cv2.imencode(
-                        ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY]
+                        ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, mjpeg.quality]
                     )
                     if ok:
                         data = jpeg.tobytes()
@@ -105,8 +105,9 @@ class MJPEGServer:
     GPU サーバー上でディスプレイなしで動かすときに使用する。
     """
 
-    def __init__(self, port: int):
+    def __init__(self, port: int, quality: int = STREAM_JPEG_QUALITY):
         self.port = port
+        self.quality = quality  # JPEG 品質（高いほど高画質・高帯域）
         self.latest_frame = None
         self.frame_lock = threading.Lock()
         self._server = None
@@ -145,7 +146,8 @@ def _spherical_to_pixel(yaw_deg, pitch_deg, frame_w, frame_h):
 class GazePipeline:
     """全モジュールを統合したリアルタイム視線推定パイプライン。"""
 
-    def __init__(self, source=None, display_scale=DISPLAY_SCALE, stream_port=None):
+    def __init__(self, source=None, display_scale=DISPLAY_SCALE, stream_port=None,
+                 stream_quality=STREAM_JPEG_QUALITY):
         """
         Parameters
         ----------
@@ -157,10 +159,14 @@ class GazePipeline:
         stream_port : int | None
             指定時は MJPEG HTTP サーバーを起動してブラウザで映像を視聴できる。
             None のとき cv2.imshow でローカル表示（デフォルト）。
+        stream_quality : int
+            ストリーム配信時の JPEG 品質（高いほど高画質・高帯域）。
         """
         self.source = source
         self.display_scale = display_scale
-        self._mjpeg_server = MJPEGServer(stream_port) if stream_port else None
+        self._mjpeg_server = (
+            MJPEGServer(stream_port, quality=stream_quality) if stream_port else None
+        )
 
         print("=" * 50)
         print("  gaze360 パイプライン 初期化")
@@ -396,6 +402,11 @@ def main():
         help="MJPEG HTTP ストリームのポート番号（例: 8080）。"
              "指定時はブラウザで映像を視聴。省略時は cv2 ウィンドウ表示。",
     )
+    parser.add_argument(
+        "--stream-quality", type=int, default=STREAM_JPEG_QUALITY, dest="stream_quality",
+        help=f"ストリーム配信時の JPEG 品質 1-100（デフォルト: {STREAM_JPEG_QUALITY}）。"
+             "高いほど高画質・高帯域。VPN が細い場合は下げる。",
+    )
     args = parser.parse_args()
 
     # scale 未指定時: ストリーム配信は帯域節約のため縮小、ローカルは原寸
@@ -410,6 +421,7 @@ def main():
         source=args.source,
         display_scale=scale,
         stream_port=args.stream_port,
+        stream_quality=args.stream_quality,
     )
 
     # SSH 切断（SIGHUP）や終了シグナル（SIGTERM）でソケットを確実に解放する

@@ -3,15 +3,24 @@
 #
 # 使い方:
 #   cp run_gpu.sh.example run_gpu.sh
-#   # run_gpu.sh 内の変数を編集する
+#   # run_gpu.sh 内の変数を自分の環境に合わせて編集する
 #   bash run_gpu.sh
+#   ブラウザで表示されたURLを開く（終了は Ctrl+C）
+#
+# 設計方針:
+#   - 単一のSSH接続でトンネルとパイプライン実行を同時に行う
+#   - ServerAliveInterval でSSHを切らさない（切れるとカメラ入力も止まる）
+#   - 毎回ランダムポート（ポート競合の回避）
+#   - tee は Mac 側で行う（リモートに置くと SSH 切断時の SIGHUP が届かない）
 
 GUNDAM_USER="your_username"         # GPU サーバーのユーザー名
 GUNDAM_HOST="xxx.xxx.xxx.xxx"       # GPU サーバーの IP アドレス
 THETA_IP="xxx.xxx.xxx.xxx"          # THETA X の IP（Mac の .env に書いてある値）
-TUNNEL_PORT=$((RANDOM + 40000))          # ランダムポート（毎回変わるので競合しない）
-STREAM_PORT=$((RANDOM % 1000 + 9000))   # ランダムポート（9000〜9999）
-GPU_INDEX=0                         # 使用する GPU 番号
+TUNNEL_PORT=$((RANDOM % 20000 + 40000))   # 40000〜59999
+STREAM_PORT=$((RANDOM % 1000 + 9000))     # 9000〜9999
+GPU_INDEX=0         # 使用する GPU 番号
+STREAM_SCALE=0.7    # 配信フレームの縮小倍率（大きいほど高画質・高帯域）
+STREAM_QUALITY=70   # 配信JPEG品質 1-100（大きいほど高画質・高帯域）
 
 echo "=========================================="
 echo "  gaze360 GPU パイプライン 起動"
@@ -22,10 +31,21 @@ echo "  終了     : Ctrl+C"
 echo "=========================================="
 echo ""
 
-ssh \
+# gundam 上で実行するコマンド（pkill は使わない: 自分自身を巻き込むため）
+REMOTE_CMD="cd ~/gaze360 && source venv/bin/activate && \
+export CUDA_VISIBLE_DEVICES=${GPU_INDEX} && \
+export THETA_IP=localhost:${TUNNEL_PORT} && \
+exec python -m src.pipeline --stream-port ${STREAM_PORT} \
+--scale ${STREAM_SCALE} --stream-quality ${STREAM_QUALITY}"
+
+# 単一SSH接続: -R でトンネルを張りながら、その接続上でパイプラインを実行
+ssh -t \
   -o ServerAliveInterval=30 \
-  -o ServerAliveCountMax=3 \
+  -o ServerAliveCountMax=10 \
   -o ExitOnForwardFailure=yes \
   -R "${TUNNEL_PORT}:${THETA_IP}:80" \
   "${GUNDAM_USER}@${GUNDAM_HOST}" \
-  "cd gaze360 && source venv/bin/activate && export CUDA_VISIBLE_DEVICES=${GPU_INDEX} && THETA_IP=localhost:${TUNNEL_PORT} python -m src.pipeline --stream-port ${STREAM_PORT}"
+  "${REMOTE_CMD}" 2>&1 | tee /tmp/gaze360_local.log
+
+echo ""
+echo "終了しました。ログ: /tmp/gaze360_local.log"
