@@ -26,6 +26,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+from typing import Callable, List, Optional
+
 import cv2
 import numpy as np
 
@@ -33,6 +35,7 @@ from src.camera.theta_stream import ThetaStream
 from src.detection.person_detector import PersonDetector
 from src.detection.head_detector import HeadDetector
 from src.gaze.estimator import GazeEstimator
+from src.gaze.result import GazeResult
 from src.projection.equirect import (
     equirect_to_perspective,
     heatmap_to_spherical,
@@ -197,7 +200,8 @@ class GazePipeline:
     """全モジュールを統合したリアルタイム視線推定パイプライン。"""
 
     def __init__(self, source=None, display_scale=DISPLAY_SCALE, stream_port=None,
-                 stream_quality=STREAM_JPEG_QUALITY):
+                 stream_quality=STREAM_JPEG_QUALITY,
+                 on_results: Optional[Callable[[List[GazeResult]], None]] = None):
         """
         Parameters
         ----------
@@ -211,9 +215,14 @@ class GazePipeline:
             None のとき cv2.imshow でローカル表示（デフォルト）。
         stream_quality : int
             ストリーム配信時の JPEG 品質（高いほど高画質・高帯域）。
+        on_results : Callable[[list[GazeResult]], None] | None
+            各フレームの視線推定結果を受け取るコールバック（消費側の出口）。
+            指定時のみ毎フレーム呼ばれる。None なら従来どおり描画のみ。
+            ロボット制御など外部アプリは gaze360 を import し、ここに処理を渡す。
         """
         self.source = source
         self.display_scale = display_scale
+        self._on_results = on_results
         self._mjpeg_server = (
             MJPEGServer(stream_port, quality=stream_quality) if stream_port else None
         )
@@ -295,13 +304,17 @@ class GazePipeline:
         """1フレーム処理して表示を更新。False を返したら終了。"""
         t0 = time.perf_counter()
 
-        annotated, logs = self._process(frame)
+        annotated, logs, results = self._process(frame)
 
         elapsed = time.perf_counter() - t0
         self._fps = 0.85 * self._fps + 0.15 * (1.0 / max(elapsed, 1e-6))
 
         for log in logs:
             print(log)
+
+        # 消費側（ロボット制御など）への出口。指定時のみ呼ぶ。
+        if self._on_results is not None:
+            self._on_results(results)
 
         display = self._resize_for_display(annotated)
 
@@ -332,8 +345,8 @@ class GazePipeline:
         detections = self.detector.detect(frame)
 
         logs = []
-        gaze_results = []
-        head_results = []
+        results = []      # list[GazeResult] — 外部出力契約
+        head_boxes = []   # 描画用の頭部枠の対角2隅 (corner_a, corner_b) | None（契約には含めない）
 
         for i, det in enumerate(detections):
             patch_rgb = equirect_to_perspective(
@@ -352,11 +365,26 @@ class GazePipeline:
                 pitch_deg=det.pitch_deg,
                 fov_deg=FOV_DEG,
             )
-            gaze_results.append((gaze_yaw, gaze_pitch, inout))
 
             # 頭部 BBox（パッチ正規化座標）の中心と対角2隅をワールド球面座標へ変換。
-            # 矢印起点と頭部枠の描画に使う（None なら _draw 側で体の中心にフォールバック）。
-            head_results.append(self._head_to_spherical(head_bbox, det))
+            # 中心は GazeResult.head_* と矢印起点に、2隅は頭部枠の描画に使う。
+            head = self._head_to_spherical(head_bbox, det)
+            if head is not None:
+                (head_yaw, head_pitch), corner_a, corner_b = head
+                head_boxes.append((corner_a, corner_b))
+            else:
+                head_yaw = head_pitch = None
+                head_boxes.append(None)
+
+            results.append(GazeResult(
+                person_id=i + 1,
+                gaze_yaw=gaze_yaw,
+                gaze_pitch=gaze_pitch,
+                inout=inout,
+                confidence=det.confidence,
+                head_yaw=head_yaw,
+                head_pitch=head_pitch,
+            ))
 
             status = "フレーム内" if inout >= INOUT_THRESH else "フレーム外"
             head_mark = "○" if head_bbox is not None else "×"
@@ -368,8 +396,8 @@ class GazePipeline:
         if not detections:
             logs.append(f"[フレーム] 人物なし  FPS={self._fps:.1f}")
 
-        annotated = self._draw(frame, detections, gaze_results, head_results)
-        return annotated, logs
+        annotated = self._draw(frame, detections, results, head_boxes)
+        return annotated, logs, results
 
     @staticmethod
     def _head_to_spherical(head_bbox, det):
@@ -395,12 +423,12 @@ class GazePipeline:
     # 可視化
     # ------------------------------------------------------------------
 
-    def _draw(self, frame, detections, gaze_results, head_results):
+    def _draw(self, frame, detections, results, head_boxes):
         vis = frame.copy()
         h, w = vis.shape[:2]
 
-        for i, (det, (gaze_yaw, gaze_pitch, inout), head) in enumerate(
-            zip(detections, gaze_results, head_results)
+        for i, (det, res, head_box) in enumerate(
+            zip(detections, results, head_boxes)
         ):
             x1, y1, x2, y2 = (int(v) for v in det.bbox_px)
 
@@ -425,26 +453,28 @@ class GazePipeline:
             # 矢印起点: 頭部中心（検出時）。頭部 BBox はマゼンタで描画する。
             # 未検出時は人物の球面中心へフォールバック（det.yaw_deg はマージ人物でも
             # つなぎ目＝真の位置を指すため、体の左片中心より起点が正確になる）。
-            if head is not None:
-                (origin_yaw, origin_pitch), corner_a, corner_b = head
-                _draw_head_box(vis, corner_a, corner_b, COLOR_HEAD, w, h)
+            if res.head_yaw is not None:
+                origin_yaw, origin_pitch = res.head_yaw, res.head_pitch
+                if head_box is not None:
+                    corner_a, corner_b = head_box
+                    _draw_head_box(vis, corner_a, corner_b, COLOR_HEAD, w, h)
             else:
                 origin_yaw, origin_pitch = det.yaw_deg, det.pitch_deg
             ox, oy = _spherical_to_pixel(origin_yaw, origin_pitch, w, h)
 
             # 視線先ピクセル
-            gx, gy = _spherical_to_pixel(gaze_yaw, gaze_pitch, w, h)
-            color = COLOR_GAZE_IN if inout >= INOUT_THRESH else COLOR_GAZE_OUT
+            gx, gy = _spherical_to_pixel(res.gaze_yaw, res.gaze_pitch, w, h)
+            color = COLOR_GAZE_IN if res.inout >= INOUT_THRESH else COLOR_GAZE_OUT
 
             # 矢印（頭部起点→視線先。境界をまたぐ場合は2分割で画面横断を防ぐ）
-            _draw_gaze_arrow(vis, ox, oy, origin_yaw, gaze_yaw, gx, gy, color, w)
+            _draw_gaze_arrow(vis, ox, oy, origin_yaw, res.gaze_yaw, gx, gy, color, w)
 
             # 視線先マーカー（塗りつぶし円）
             cv2.circle(vis, (gx, gy), 10, color, -1)
             cv2.circle(vis, (gx, gy), 10, (255, 255, 255), 1)  # 白縁
 
             # 方位角・仰角テキスト
-            label = f"az:{gaze_yaw:+.0f} el:{gaze_pitch:+.0f}"
+            label = f"az:{res.gaze_yaw:+.0f} el:{res.gaze_pitch:+.0f}"
             cv2.putText(
                 vis, label,
                 (gx + 13, gy + 5),
