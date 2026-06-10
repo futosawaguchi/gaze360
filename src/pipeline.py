@@ -31,6 +31,7 @@ import numpy as np
 
 from src.camera.theta_stream import ThetaStream
 from src.detection.person_detector import PersonDetector
+from src.detection.head_detector import HeadDetector
 from src.gaze.estimator import GazeEstimator
 from src.projection.equirect import equirect_to_perspective, heatmap_to_spherical
 
@@ -172,6 +173,7 @@ class GazePipeline:
         print("  gaze360 パイプライン 初期化")
         print("=" * 50)
         self.detector = PersonDetector(model_size="n")
+        self.head_detector = HeadDetector(model_size="n")
         self.estimator = GazeEstimator()
         self._fps = 0.0
         os.makedirs("outputs", exist_ok=True)
@@ -291,7 +293,9 @@ class GazePipeline:
                 fov_deg=FOV_DEG,
                 out_size=PATCH_SIZE,
             )
-            heatmap, inout = self.estimator.predict(patch_rgb)
+            # パッチ内で頭部 BBox を検出して Gaze-LLE に渡す（None ならフォールバック）
+            head_bbox = self.head_detector.detect_head(patch_rgb)
+            heatmap, inout = self.estimator.predict(patch_rgb, bbox=head_bbox)
             gaze_yaw, gaze_pitch = heatmap_to_spherical(
                 heatmap,
                 yaw_deg=det.yaw_deg,
@@ -301,9 +305,10 @@ class GazePipeline:
             gaze_results.append((gaze_yaw, gaze_pitch, inout))
 
             status = "フレーム内" if inout >= INOUT_THRESH else "フレーム外"
+            head_mark = "○" if head_bbox is not None else "×"
             logs.append(
                 f"人物{i + 1}: 方位角 {gaze_yaw:+.1f}°, 仰角 {gaze_pitch:+.1f}° を見ている"
-                f"  [{status}  inout={inout:.2f}  conf={det.confidence:.2f}]"
+                f"  [{status}  inout={inout:.2f}  conf={det.confidence:.2f}  head={head_mark}]"
             )
 
         if not detections:
@@ -333,6 +338,16 @@ class GazePipeline:
                 (x1, max(y1 - 6, 14)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, COLOR_PERSON, 2,
             )
+
+            # 360度境界マージ時は2片目（反対側の端）も描く
+            if det.extra_bbox_px is not None:
+                ex1, ey1, ex2, ey2 = (int(v) for v in det.extra_bbox_px)
+                cv2.rectangle(vis, (ex1, ey1), (ex2, ey2), COLOR_PERSON, 2)
+                cv2.putText(
+                    vis, f"P{i + 1}",
+                    (ex1, max(ey1 - 6, 14)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, COLOR_PERSON, 2,
+                )
 
             # 視線先ピクセル
             gx, gy = _spherical_to_pixel(gaze_yaw, gaze_pitch, w, h)
