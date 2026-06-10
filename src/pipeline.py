@@ -36,6 +36,7 @@ from src.detection.person_detector import PersonDetector
 from src.detection.head_detector import HeadDetector
 from src.gaze.estimator import GazeEstimator
 from src.gaze.result import GazeResult
+from src.gaze.publisher import GazeResultPublisher
 from src.projection.equirect import (
     equirect_to_perspective,
     heatmap_to_spherical,
@@ -201,7 +202,8 @@ class GazePipeline:
 
     def __init__(self, source=None, display_scale=DISPLAY_SCALE, stream_port=None,
                  stream_quality=STREAM_JPEG_QUALITY,
-                 on_results: Optional[Callable[[List[GazeResult]], None]] = None):
+                 on_results: Optional[Callable[[List[GazeResult]], None]] = None,
+                 publish_port=None):
         """
         Parameters
         ----------
@@ -219,10 +221,14 @@ class GazePipeline:
             各フレームの視線推定結果を受け取るコールバック（消費側の出口）。
             指定時のみ毎フレーム呼ばれる。None なら従来どおり描画のみ。
             ロボット制御など外部アプリは gaze360 を import し、ここに処理を渡す。
+        publish_port : int | None
+            指定時は GazeResult を行区切り JSON で TCP 配信する（疎結合連携の出口）。
+            None なら配信しない（既存動作）。SSH -L で転送し別マシンの購読側へ渡せる。
         """
         self.source = source
         self.display_scale = display_scale
         self._on_results = on_results
+        self._publisher = GazeResultPublisher(publish_port) if publish_port else None
         self._mjpeg_server = (
             MJPEGServer(stream_port, quality=stream_quality) if stream_port else None
         )
@@ -242,6 +248,8 @@ class GazePipeline:
 
     def run(self):
         """パイプラインを起動してメインループを実行する。"""
+        if self._publisher:
+            self._publisher.start()
         if self._mjpeg_server:
             self._mjpeg_server.start()
             print("\n起動完了。Ctrl+C で終了\n")
@@ -257,6 +265,8 @@ class GazePipeline:
             # 正常終了・例外・Ctrl+C どの場合もソケットを確実に解放する
             if self._mjpeg_server:
                 self._mjpeg_server.stop()
+            if self._publisher:
+                self._publisher.stop()
 
     def _run_camera(self):
         try:
@@ -315,6 +325,9 @@ class GazePipeline:
         # 消費側（ロボット制御など）への出口。指定時のみ呼ぶ。
         if self._on_results is not None:
             self._on_results(results)
+        # 疎結合連携: 指定時のみ GazeResult を TCP 配信する。
+        if self._publisher is not None:
+            self._publisher.publish(results)
 
         display = self._resize_for_display(annotated)
 
@@ -533,6 +546,11 @@ def main():
         help=f"ストリーム配信時の JPEG 品質 1-100（デフォルト: {STREAM_JPEG_QUALITY}）。"
              "高いほど高画質・高帯域。VPN が細い場合は下げる。",
     )
+    parser.add_argument(
+        "--publish-port", type=int, default=None, dest="publish_port",
+        help="視線データ(GazeResult)を TCP・行区切りJSONで配信するポート（例: 8090）。"
+             "疎結合連携（外部アプリが購読）用。省略時は配信しない。",
+    )
     args = parser.parse_args()
 
     # scale 未指定時: ストリーム配信は帯域節約のため縮小、ローカルは原寸
@@ -548,6 +566,7 @@ def main():
         display_scale=scale,
         stream_port=args.stream_port,
         stream_quality=args.stream_quality,
+        publish_port=args.publish_port,
     )
 
     # SSH 切断（SIGHUP）や終了シグナル（SIGTERM）でソケットを確実に解放する
@@ -555,6 +574,8 @@ def main():
         print(f"\nシグナル {signum} を受信。終了します...")
         if pipeline._mjpeg_server:
             pipeline._mjpeg_server.stop()
+        if pipeline._publisher:
+            pipeline._publisher.stop()
         sys.exit(0)
 
     signal.signal(signal.SIGHUP, _handle_signal)

@@ -174,6 +174,7 @@ bash run_gpu.sh
 | `--source PATH` | 動画ファイルを入力に使う（省略時は THETA X カメラ） |
 | `--stream-port PORT` | MJPEG を HTTP 配信（省略時は cv2 ウィンドウ表示） |
 | `--stream-quality 1-100` | ストリーム配信時の JPEG 品質（デフォルト 55。VPN が細い場合は下げる） |
+| `--publish-port PORT` | 視線データ（`GazeResult`）を TCP・行区切り JSON で配信（例: 8090）。外部アプリが購読する疎結合連携用。省略時は配信しない |
 | `--scale FLOAT` | 表示・配信フレームの縮小倍率（省略時: ローカル `1.0` / ストリーム `0.5`） |
 
 ### プログラムから視線データを使う（外部連携）
