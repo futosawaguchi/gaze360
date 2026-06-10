@@ -106,17 +106,19 @@ class HeadDetector:
 
         xs = visible[:, 0]
         ys = visible[:, 1]
-        xmin, xmax = float(xs.min()), float(xs.max())
-        ymin, ymax = float(ys.min()), float(ys.max())
 
-        # 顔 keypoint の外接矩形に、頭全体を含むようマージンを付ける
-        bw = max(xmax - xmin, 1.0)
-        bh = max(ymax - ymin, 1.0)
-        # 横は左右に40%ずつ、下は顎方向に60%、上は頭頂方向に高さの150%拡張
-        xmin -= bw * 0.4
-        xmax += bw * 0.4
-        ymax += bh * 0.6
-        ymin -= bh * 1.5
+        # 顔 keypoint の縦（目〜鼻）は狭く頭の大きさの目安にならないため、
+        # 横幅（耳〜耳 ≒ 頭幅）を基準にサイズを決め、目のラインを起点に縦長の箱を作る。
+        cx = float(xs.min() + xs.max()) / 2.0
+        face_w = max(float(xs.max() - xs.min()), 1.0)  # 耳〜耳 ≒ 頭の幅
+        half_w = face_w * 0.8                           # 頭の半幅（左右に少し広げる）
+        head_h = face_w * 1.6                           # 頭は横より縦に長い
+        eye_y = float(ys.min())                         # 目・耳のライン（顔kpの上端）
+
+        xmin = cx - half_w
+        xmax = cx + half_w
+        ymin = eye_y - head_h * 0.45                    # 目から上（額・頭頂・髪）
+        ymax = eye_y + head_h * 0.55                    # 目から下（鼻・口・顎）
 
         # 画像範囲にクランプして正規化
         xmin = max(0.0, xmin) / w
