@@ -1,0 +1,20 @@
+# gaze360 直接依存（PyPI）
+#
+# torch / torchvision は環境別の index を使うためここには含めない。
+# README に従って別途インストールすること:
+#   Mac (MPS):  pip install torch torchvision
+#   GPU (CUDA): pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   （動作確認時: torch==2.12.0 / torchvision==0.27.0）
+#
+# Gaze-LLE / theta-x-live は submodule から:
+#   pip install -e third_party/gazelle
+#   pip install -r third_party/theta-x-live/requirements.txt
+
+numpy==2.4.6
+opencv-python==4.13.0.92
+pillow==12.2.0
+py360convert==1.0.4
+python-dotenv==1.2.2
+requests==2.34.2
+timm==1.0.27
+ultralytics==8.4.60

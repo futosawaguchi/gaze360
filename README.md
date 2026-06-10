@@ -61,6 +61,7 @@ gaze360/
 │   ├── test_result.py                # GazeResult / select_primary のテスト
 │   └── relay_camera.py               # カメラ中継サーバー（同一LAN時の代替手段）
 ├── third_party/                      # サブモジュール（gazelle, theta-x-live）
+├── requirements.txt                  # PyPI 直接依存（torch・submodule は別途）
 ├── run_gpu.sh.example                # GPUサーバー実行スクリプトのテンプレート
 └── README.md
 ```
@@ -94,7 +95,7 @@ source venv/bin/activate
 pip install torch torchvision
 pip install -e third_party/gazelle
 pip install -r third_party/theta-x-live/requirements.txt
-pip install py360convert ultralytics timm
+pip install -r requirements.txt
 ```
 
 ### GPUサーバー（本番環境・CUDA 12.1）
@@ -103,7 +104,7 @@ pip install py360convert ultralytics timm
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install -e third_party/gazelle
 pip install -r third_party/theta-x-live/requirements.txt
-pip install py360convert ultralytics timm
+pip install -r requirements.txt
 pip install -U xformers --index-url https://download.pytorch.org/whl/cu121  # 高速化（任意）
 ```
 
