@@ -38,6 +38,73 @@ def equirect_to_perspective(frame, yaw_deg, pitch_deg, fov_deg=90, out_size=448)
     return cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2RGB)
 
 
+def patch_norm_to_spherical(col_norm, row_norm, yaw_deg, pitch_deg, fov_deg=90):
+    """透視投影パッチ内の正規化座標 [0, 1] を 360°ワールド球面座標に変換する。
+
+    equirect_to_perspective() で yaw_deg/pitch_deg/fov_deg を中心に切り出したパッチ上の
+    任意の点（頭部 BBox 中心や視線ヒートマップのピークなど）を、ワールド空間の
+    方位角・仰角へ写像する。heatmap_to_spherical の中核計算（Step2-4）と共有する。
+
+    Parameters
+    ----------
+    col_norm : float
+        パッチ内の水平位置 [0, 1]。0 が左端、1 が右端。
+    row_norm : float
+        パッチ内の垂直位置 [0, 1]。0 が上端、1 が下端。
+    yaw_deg, pitch_deg : float
+        equirect_to_perspective() に渡したカメラの方位角・仰角（度）。
+    fov_deg : float
+        equirect_to_perspective() に渡した画角（度）。
+
+    Returns
+    -------
+    tuple[float, float]
+        (azimuth_deg, elevation_deg)。azimuth ∈ [-180, 180]、elevation ∈ [-90, 90]。
+    """
+    # --- ステップ1: 正規化座標 → カメラフレーム内レイ方向 ---
+    # py360convert の xyzpers は linspace(-tan_half, +tan_half, N) の格子を使う
+    tan_half = np.tan(np.deg2rad(fov_deg / 2.0))
+    x_cam = -tan_half + col_norm * 2.0 * tan_half
+    # 画像行は下が正。カメラフレームのy軸は上が正なので符号を反転。
+    y_cam = tan_half - row_norm * 2.0 * tan_half
+    z_cam = 1.0
+
+    norm = np.sqrt(x_cam ** 2 + y_cam ** 2 + z_cam ** 2)
+    cam_ray = np.array([x_cam / norm, y_cam / norm, z_cam / norm])
+
+    # --- ステップ2: カメラフレーム → ワールドフレームへ回転 ---
+    # py360convert e2p.py の符号に合わせる:
+    #   u = -deg2rad(u_deg)  (yaw)
+    #   v =  deg2rad(v_deg)  (pitch)
+    # world_ray = cam_ray @ Rx(v) @ Ry(u)
+    u = -np.deg2rad(yaw_deg)
+    v = np.deg2rad(pitch_deg)
+
+    cos_u, sin_u = np.cos(u), np.sin(u)
+    cos_v, sin_v = np.cos(v), np.sin(v)
+
+    Rx = np.array([
+        [1,     0,      0],
+        [0,  cos_v, -sin_v],
+        [0,  sin_v,  cos_v],
+    ])
+    Ry = np.array([
+        [ cos_u, 0, sin_u],
+        [     0, 1,     0],
+        [-sin_u, 0, cos_u],
+    ])
+
+    world_ray = cam_ray @ Rx @ Ry
+
+    # --- ステップ3: 直交座標 → 球面座標 ---
+    azimuth_deg = np.degrees(np.arctan2(world_ray[0], world_ray[2]))
+    elevation_deg = np.degrees(
+        np.arctan2(world_ray[1], np.hypot(world_ray[0], world_ray[2]))
+    )
+
+    return float(azimuth_deg), float(elevation_deg)
+
+
 def heatmap_to_spherical(heatmap, yaw_deg, pitch_deg, fov_deg=90):
     """
     Gaze-LLEの出力ヒートマップのピークを球面座標（方位角・仰角）に変換する。
@@ -78,45 +145,8 @@ def heatmap_to_spherical(heatmap, yaw_deg, pitch_deg, fov_deg=90):
     peak_row = float((heatmap * row_idx).sum() / total)
     peak_col = float((heatmap * col_idx).sum() / total)
 
-    # --- Step 2: ピクセル座標 → カメラフレーム内レイ方向 ---
-    # py360convert の xyzpers は linspace(-tan_half, +tan_half, N) の格子を使う
-    tan_half = np.tan(np.deg2rad(fov_deg / 2.0))
-    x_cam = -tan_half + peak_col * 2.0 * tan_half / (W - 1)
-    # 画像行は下が正。カメラフレームのy軸は上が正なので符号を反転。
-    y_cam = tan_half - peak_row * 2.0 * tan_half / (H - 1)
-    z_cam = 1.0
-
-    norm = np.sqrt(x_cam ** 2 + y_cam ** 2 + z_cam ** 2)
-    cam_ray = np.array([x_cam / norm, y_cam / norm, z_cam / norm])
-
-    # --- Step 3: カメラフレーム → ワールドフレームへ回転 ---
-    # py360convert e2p.py の符号に合わせる:
-    #   u = -deg2rad(u_deg)  (yaw)
-    #   v =  deg2rad(v_deg)  (pitch)
-    # world_ray = cam_ray @ Rx(v) @ Ry(u)
-    u = -np.deg2rad(yaw_deg)
-    v = np.deg2rad(pitch_deg)
-
-    cos_u, sin_u = np.cos(u), np.sin(u)
-    cos_v, sin_v = np.cos(v), np.sin(v)
-
-    Rx = np.array([
-        [1,     0,      0],
-        [0,  cos_v, -sin_v],
-        [0,  sin_v,  cos_v],
-    ])
-    Ry = np.array([
-        [ cos_u, 0, sin_u],
-        [     0, 1,     0],
-        [-sin_u, 0, cos_u],
-    ])
-
-    world_ray = cam_ray @ Rx @ Ry
-
-    # --- Step 4: 直交座標 → 球面座標 ---
-    azimuth_deg = np.degrees(np.arctan2(world_ray[0], world_ray[2]))
-    elevation_deg = np.degrees(
-        np.arctan2(world_ray[1], np.hypot(world_ray[0], world_ray[2]))
+    # --- Step 2: パッチ正規化座標に直してワールド球面座標へ ---
+    # peak_col/(W-1)・peak_row/(H-1) でパッチ内 [0,1] 正規化座標に変換し、共通ヘルパーに渡す。
+    return patch_norm_to_spherical(
+        peak_col / (W - 1), peak_row / (H - 1), yaw_deg, pitch_deg, fov_deg
     )
-
-    return float(azimuth_deg), float(elevation_deg)

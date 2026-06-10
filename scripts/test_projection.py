@@ -7,6 +7,10 @@ src/projection/equirect.py の動作確認スクリプト。
 
 テスト2: equirect_to_perspective のスモークテスト
   合成Equirectangular画像（ランダムノイズ）で e2p が正しく動くか確認
+
+テスト3: patch_norm_to_spherical の変換確認
+  パッチ中心(0.5,0.5)→カメラ方向、および heatmap 経路と同じ正規化で
+  既知の球面座標を復元できることを確認（誤差 < 0.01°）
 """
 import sys
 import os
@@ -14,7 +18,11 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
-from src.projection.equirect import equirect_to_perspective, heatmap_to_spherical
+from src.projection.equirect import (
+    equirect_to_perspective,
+    heatmap_to_spherical,
+    patch_norm_to_spherical,
+)
 
 
 def make_gaussian_heatmap(peak_row, peak_col, H=64, W=64, sigma=2.0):
@@ -100,6 +108,54 @@ def test_round_trip():
     return all_pass
 
 
+def test_patch_norm_to_spherical():
+    print("=== テスト3: patch_norm_to_spherical 変換 ===")
+    all_pass = True
+
+    # ケースA: パッチ中心 (0.5, 0.5) はカメラ方向そのものを返す
+    center_cases = [
+        # (cam_yaw, cam_pitch, fov_deg)
+        (30.0, 15.0, 90.0),
+        (-90.0, 0.0, 90.0),
+        (170.0, 5.0, 60.0),
+    ]
+    for cam_yaw, cam_pitch, fov_deg in center_cases:
+        az, el = patch_norm_to_spherical(0.5, 0.5, cam_yaw, cam_pitch, fov_deg)
+        ok = abs(az - cam_yaw) < 0.01 and abs(el - cam_pitch) < 0.01
+        all_pass &= ok
+        print(
+            f"  {'PASS' if ok else 'FAIL'}: 中心(0.5,0.5) cam=({cam_yaw:.1f}°,{cam_pitch:.1f}°) "
+            f"→ ({az:.4f}°, {el:.4f}°)"
+        )
+
+    # ケースB: heatmap_to_spherical と同じ格子・正規化で同じ結果になることを確認
+    grid_cases = [
+        # (target_az, target_el, cam_yaw, cam_pitch, fov_deg)
+        (50.0, 25.0, 30.0, 15.0, 90.0),
+        (10.0, -20.0, 20.0, -10.0, 60.0),
+    ]
+    H = W = 64
+    for target_az, target_el, cam_yaw, cam_pitch, fov_deg in grid_cases:
+        row_f, col_f = world_dir_to_heatmap_pixel(
+            target_az, target_el, cam_yaw, cam_pitch, fov_deg, H, W
+        )
+        if not (0 <= row_f <= H - 1 and 0 <= col_f <= W - 1):
+            print(f"  SKIP: ({target_az:.1f}°, {target_el:.1f}°) はパッチ外")
+            continue
+        az, el = patch_norm_to_spherical(
+            col_f / (W - 1), row_f / (H - 1), cam_yaw, cam_pitch, fov_deg
+        )
+        ok = abs(az - target_az) < 0.01 and abs(el - target_el) < 0.01
+        all_pass &= ok
+        print(
+            f"  {'PASS' if ok else 'FAIL'}: target=({target_az:.1f}°, {target_el:.1f}°) "
+            f"recovered=({az:.4f}°, {el:.4f}°)"
+        )
+
+    print("-> 全ケース PASS\n" if all_pass else "-> 失敗あり\n")
+    return all_pass
+
+
 def test_equirect_to_perspective():
     print("=== テスト2: equirect_to_perspective スモークテスト ===")
 
@@ -123,8 +179,9 @@ def test_equirect_to_perspective():
 if __name__ == "__main__":
     ok1 = test_round_trip()
     ok2 = test_equirect_to_perspective()
+    ok3 = test_patch_norm_to_spherical()
 
-    if ok1 and ok2:
+    if ok1 and ok2 and ok3:
         print("全テスト PASS")
         sys.exit(0)
     else:
