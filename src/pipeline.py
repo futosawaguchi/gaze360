@@ -19,6 +19,7 @@ Equirectangular フレーム上に結果を可視化する。
 """
 
 import argparse
+import math
 import os
 import signal
 import sys
@@ -57,6 +58,13 @@ COLOR_HEAD    = (255, 0, 255)  # 頭部 BBox: マゼンタ
 COLOR_GAZE_IN = (0, 60, 255)   # 視線先（フレーム内）: 赤
 COLOR_GAZE_OUT = (160, 160, 160) # 視線先（フレーム外）: グレー
 COLOR_FPS     = (0, 220, 255)  # FPS テキスト: 黄
+
+# ---- 視線矢印 -------------------------------------------------------------
+ARROW_THICKNESS = 3       # 線の太さ
+ARROW_TIP_PX = 18.0       # 矢じりの目標実寸（px）
+ARROW_TIP_RATIO_MAX = 0.4 # tipLength の上限（短い矢印で矢じりが線を食い潰さないように）
+ARROW_MIN_PX = 6.0        # これ未満の線長では矢印が成立しないため小マーカーで代替
+ARROW_MIN_MARKER_R = 5    # 代替マーカーの半径
 
 
 class _MJPEGHandler(BaseHTTPRequestHandler):
@@ -153,6 +161,21 @@ def _spherical_to_pixel(yaw_deg, pitch_deg, frame_w, frame_h):
     return px, py
 
 
+def _draw_arrow_segment(vis, x0, y0, x1, y1, color):
+    """(x0, y0) → (x1, y1) に矢じり付きの線分を描く。
+
+    cv2 の tipLength は線長に対する比率指定のため、そのままでは短い矢印で矢じりが
+    潰れる。ARROW_TIP_PX から比率を逆算し、矢じりの実寸をほぼ一定に保つ。
+    矢印として成立しない短さ（ほぼ正面を見ている場合）は小マーカーで代替する。
+    """
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < ARROW_MIN_PX:
+        cv2.circle(vis, (x1, y1), ARROW_MIN_MARKER_R, color, -1)
+        return
+    tip = min(ARROW_TIP_RATIO_MAX, ARROW_TIP_PX / length)
+    cv2.arrowedLine(vis, (x0, y0), (x1, y1), color, ARROW_THICKNESS, tipLength=tip)
+
+
 def _draw_gaze_arrow(vis, ox, oy, origin_yaw, gaze_yaw, gx, gy, color, w):
     """頭部起点 (ox, oy) → 視線先 (gx, gy) の矢印を描く。
 
@@ -165,7 +188,7 @@ def _draw_gaze_arrow(vis, ox, oy, origin_yaw, gaze_yaw, gx, gy, color, w):
 
     # つなぎ目をまたがない通常ケース
     if 0 <= gx_unwrapped <= w - 1:
-        cv2.arrowedLine(vis, (ox, oy), (gx, gy), color, 2, tipLength=0.15)
+        _draw_arrow_segment(vis, ox, oy, gx, gy, color)
         return
 
     # つなぎ目をまたぐ: 出口の端で分割し、反対の端から続ける
@@ -176,8 +199,8 @@ def _draw_gaze_arrow(vis, ox, oy, origin_yaw, gaze_yaw, gx, gy, color, w):
         edge_out, edge_in = 0, w - 1
         t = ox / (ox - gx_unwrapped)
     y_seam = int(round(oy + t * (gy - oy)))
-    cv2.line(vis, (ox, oy), (edge_out, y_seam), color, 2)                        # 出口（矢じりなし）
-    cv2.arrowedLine(vis, (edge_in, y_seam), (gx, gy), color, 2, tipLength=0.15)  # 続き（矢じり）
+    cv2.line(vis, (ox, oy), (edge_out, y_seam), color, ARROW_THICKNESS)  # 出口（矢じりなし）
+    _draw_arrow_segment(vis, edge_in, y_seam, gx, gy, color)             # 続き（矢じり）
 
 
 def _draw_head_box(vis, corner_a, corner_b, color, w, h):
@@ -482,15 +505,11 @@ class GazePipeline:
             # 矢印（頭部起点→視線先。境界をまたぐ場合は2分割で画面横断を防ぐ）
             _draw_gaze_arrow(vis, ox, oy, origin_yaw, res.gaze_yaw, gx, gy, color, w)
 
-            # 視線先マーカー（塗りつぶし円）
-            cv2.circle(vis, (gx, gy), 10, color, -1)
-            cv2.circle(vis, (gx, gy), 10, (255, 255, 255), 1)  # 白縁
-
             # 方位角・仰角テキスト
             label = f"az:{res.gaze_yaw:+.0f} el:{res.gaze_pitch:+.0f}"
             cv2.putText(
                 vis, label,
-                (gx + 13, gy + 5),
+                (gx + 8, gy + 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1,
             )
 
