@@ -451,8 +451,7 @@ class GazePipeline:
         annotated = self._draw(frame, detections, results, head_boxes)
         return annotated, logs, results
 
-    @staticmethod
-    def _head_to_spherical(head_bbox, det):
+    def _head_to_spherical(self, head_bbox, det):
         """頭部 BBox（パッチ正規化座標）を球面座標に変換する。
 
         Returns
