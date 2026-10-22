@@ -21,11 +21,14 @@ STREAM_PORT=$((RANDOM % 1000 + 9000))     # 9000〜9999
 GPU_INDEX=0         # 使用する GPU 番号
 STREAM_SCALE=0.7    # 配信フレームの縮小倍率（大きいほど高画質・高帯域）
 STREAM_QUALITY=70   # 配信JPEG品質 1-100（大きいほど高画質・高帯域）
+FOV=90              # 人物ごとに切り出すパッチの画角（度）。広げると視線を
+                    # 追える範囲↑／中心解像度↓。180未満。
 
 echo "=========================================="
 echo "  gaze360 GPU パイプライン 起動"
 echo "=========================================="
 echo "  トンネル : GPU:${TUNNEL_PORT} → ${THETA_IP}:80"
+echo "  パッチ画角 : ${FOV}°"
 echo "  映像視聴 : http://${GUNDAM_HOST}:${STREAM_PORT}"
 echo "  終了     : Ctrl+C"
 echo "=========================================="
@@ -36,7 +39,7 @@ REMOTE_CMD="cd ~/gaze360 && source venv/bin/activate && \
 export CUDA_VISIBLE_DEVICES=${GPU_INDEX} && \
 export THETA_IP=localhost:${TUNNEL_PORT} && \
 exec python -m src.pipeline --stream-port ${STREAM_PORT} \
---scale ${STREAM_SCALE} --stream-quality ${STREAM_QUALITY}"
+--scale ${STREAM_SCALE} --stream-quality ${STREAM_QUALITY} --fov ${FOV}"
 
 # 単一SSH接続: -R でトンネルを張りながら、その接続上でパイプラインを実行
 ssh -t \

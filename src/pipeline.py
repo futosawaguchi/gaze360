@@ -45,7 +45,7 @@ from src.projection.equirect import (
 )
 
 # ---- 定数 ----------------------------------------------------------------
-FOV_DEG = 90          # 透視投影パッチの画角
+FOV_DEG = 90          # 透視投影パッチの画角（デフォルト。--fov で変更可）
 PATCH_SIZE = 448      # Gaze-LLE の入力サイズ
 INOUT_THRESH = 0.3    # これ未満は「フレーム外を見ている」と判定
 DISPLAY_SCALE = 1.0   # 表示用にフレームを縮小する倍率（1.0 = 原寸）
@@ -226,7 +226,7 @@ class GazePipeline:
     def __init__(self, source=None, display_scale=DISPLAY_SCALE, stream_port=None,
                  stream_quality=STREAM_JPEG_QUALITY,
                  on_results: Optional[Callable[[List[GazeResult]], None]] = None,
-                 publish_port=None):
+                 publish_port=None, fov_deg=FOV_DEG):
         """
         Parameters
         ----------
@@ -247,9 +247,19 @@ class GazePipeline:
         publish_port : int | None
             指定時は GazeResult を行区切り JSON で TCP 配信する（疎結合連携の出口）。
             None なら配信しない（既存動作）。SSH -L で転送し別マシンの購読側へ渡せる。
+        fov_deg : float
+            人物ごとに切り出す透視投影パッチの画角（度）。
+            広げるほど視線を追える範囲は広がるが、出力が PATCH_SIZE 固定のため
+            中心（＝人物本人）の解像度が落ちる。180° は tan(90°)=∞ で破綻する。
         """
+        if not 0 < fov_deg < 180:
+            raise ValueError(
+                f"fov_deg は 0 < fov < 180 である必要があります（指定値: {fov_deg}）。"
+                "透視投影は 180° で端が無限に引き伸ばされ破綻する。"
+            )
         self.source = source
         self.display_scale = display_scale
+        self.fov_deg = fov_deg
         self._on_results = on_results
         self._publisher = GazeResultPublisher(publish_port) if publish_port else None
         self._mjpeg_server = (
@@ -262,6 +272,12 @@ class GazePipeline:
         self.detector = PersonDetector(model_size="n")
         self.head_detector = HeadDetector(model_size="n")
         self.estimator = GazeEstimator()
+        # 中心解像度 = 人物本人が写る密度。単純平均 PATCH_SIZE/fov ではなく、
+        # 透視投影の中心 px/度 (= (size/2)/tan(fov/2)) を出す（画角比較の指標）。
+        center_ppd = (PATCH_SIZE / 2) / math.tan(math.radians(self.fov_deg) / 2) \
+            * math.radians(1.0)
+        print(f"[Pipeline] パッチ画角: {self.fov_deg}° / {PATCH_SIZE}px "
+              f"(中心 {center_ppd:.2f}px/度)")
         self._fps = 0.0
         os.makedirs("outputs", exist_ok=True)
 
@@ -389,7 +405,7 @@ class GazePipeline:
                 frame,
                 yaw_deg=det.yaw_deg,
                 pitch_deg=det.pitch_deg,
-                fov_deg=FOV_DEG,
+                fov_deg=self.fov_deg,
                 out_size=PATCH_SIZE,
             )
             # パッチ内で頭部 BBox を検出して Gaze-LLE に渡す（None ならフォールバック）
@@ -399,7 +415,7 @@ class GazePipeline:
                 heatmap,
                 yaw_deg=det.yaw_deg,
                 pitch_deg=det.pitch_deg,
-                fov_deg=FOV_DEG,
+                fov_deg=self.fov_deg,
             )
 
             # 頭部 BBox（パッチ正規化座標）の中心と対角2隅をワールド球面座標へ変換。
@@ -449,10 +465,10 @@ class GazePipeline:
             return None
         x1n, y1n, x2n, y2n = head_bbox
         center = patch_norm_to_spherical(
-            (x1n + x2n) / 2, (y1n + y2n) / 2, det.yaw_deg, det.pitch_deg, FOV_DEG
+            (x1n + x2n) / 2, (y1n + y2n) / 2, det.yaw_deg, det.pitch_deg, self.fov_deg
         )
-        corner_a = patch_norm_to_spherical(x1n, y1n, det.yaw_deg, det.pitch_deg, FOV_DEG)
-        corner_b = patch_norm_to_spherical(x2n, y2n, det.yaw_deg, det.pitch_deg, FOV_DEG)
+        corner_a = patch_norm_to_spherical(x1n, y1n, det.yaw_deg, det.pitch_deg, self.fov_deg)
+        corner_b = patch_norm_to_spherical(x2n, y2n, det.yaw_deg, det.pitch_deg, self.fov_deg)
         return center, corner_a, corner_b
 
     # ------------------------------------------------------------------
@@ -570,6 +586,12 @@ def main():
         help="視線データ(GazeResult)を TCP・行区切りJSONで配信するポート（例: 8090）。"
              "疎結合連携（外部アプリが購読）用。省略時は配信しない。",
     )
+    parser.add_argument(
+        "--fov", type=float, default=FOV_DEG, dest="fov",
+        help=f"人物ごとに切り出すパッチの画角（度、デフォルト: {FOV_DEG}）。"
+             "広げると視線を追える範囲は広がるが、中心（人物本人）の解像度が"
+             "落ちて頭部検出・視線推定の精度が下がる。180 未満。",
+    )
     args = parser.parse_args()
 
     # scale 未指定時: ストリーム配信は帯域節約のため縮小、ローカルは原寸
@@ -586,6 +608,7 @@ def main():
         stream_port=args.stream_port,
         stream_quality=args.stream_quality,
         publish_port=args.publish_port,
+        fov_deg=args.fov,
     )
 
     # SSH 切断（SIGHUP）や終了シグナル（SIGTERM）でソケットを確実に解放する
